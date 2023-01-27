@@ -35,7 +35,8 @@ from qgis.core import (QgsProcessing,
                        QgsFeatureSink,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterFeatureSource,
-                       QgsProcessingParameterFeatureSink)
+                       #QgsProcessingParameterFeatureSink,
+                       QgsProcessingParameterFileDestination)
 
 
 class FdotCrashAlgorithm(QgsProcessingAlgorithm):
@@ -78,48 +79,53 @@ class FdotCrashAlgorithm(QgsProcessingAlgorithm):
         # We add a feature sink in which to store our processed features (this
         # usually takes the form of a newly created vector layer when the
         # algorithm is run in QGIS).
+        # self.addParameter(
+        #     QgsProcessingParameterFeatureSink(
+        #         self.OUTPUT,
+        #         self.tr('Output file'),
+        #         'CSV files (*.csv)',
+        #     )
+        # )
         self.addParameter(
-            QgsProcessingParameterFeatureSink(
+            QgsProcessingParameterFileDestination(
                 self.OUTPUT,
-                self.tr('Output layer')
+                self.tr('Output File'),
+                'CSV files (*.csv)',
             )
         )
+
 
     def processAlgorithm(self, parameters, context, feedback):
         """
         Here is where the processing itself takes place.
         """
-
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
         source = self.parameterAsSource(parameters, self.INPUT, context)
-        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
-                context, source.fields(), source.wkbType(), source.sourceCrs())
+        csv = self.parameterAsFileOutput(parameters, self.OUTPUT, context)
+
+        fieldnames = [field.name() for field in source.fields()]
 
         # Compute the number of steps to display within the progress bar and
         # get features from source
         total = 100.0 / source.featureCount() if source.featureCount() else 0
         features = source.getFeatures()
 
-        for current, feature in enumerate(features):
-            # Stop the algorithm if cancel button has been clicked
-            if feedback.isCanceled():
-                break
+        with open(csv, 'w') as output_file:
+            # write header
+            line = ','.join(name for name in fieldnames) + '\n'
+            output_file.write(line)
+            for current, f in enumerate(features):
+                # Stop the algorithm if cancel button has been clicked
+                if feedback.isCanceled():
+                    break
 
-            # Add a feature in the sink
-            sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                # Add a feature in the sink
+                line = ','.join(str(f[name]) for name in fieldnames) + '\n'
+                output_file.write(line)
 
-            # Update the progress bar
-            feedback.setProgress(int(current * total))
-
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
-        return {self.OUTPUT: dest_id}
+                # Update the progress bar
+                feedback.setProgress(int(current * total))
+        return {self.OUTPUT: csv}
+        
 
     def name(self):
         """
@@ -152,7 +158,7 @@ class FdotCrashAlgorithm(QgsProcessingAlgorithm):
         The group id should be unique within each provider. Group id should
         contain lowercase alphanumeric characters only and no spaces or other
         formatting characters.
-        """
+        """        
         return 'Data Tools'
 
     def tr(self, string):
