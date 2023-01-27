@@ -35,7 +35,8 @@ import inspect
 from qgis.PyQt.QtGui import QIcon
 
 from qgis.core import QgsProcessingProvider
-from .fdot_crash_safety_algorithm import FdotCrashAlgorithm
+from .fdot_fetch_csv_algorithm import FetchCrashData
+from .assign_points_to_segments_algorithm import AssignPointsToSegments
 
 
 class FdotCrashProvider(QgsProcessingProvider):
@@ -57,7 +58,8 @@ class FdotCrashProvider(QgsProcessingProvider):
         """
         Loads all algorithms belonging to this provider.
         """
-        self.addAlgorithm(FdotCrashAlgorithm())
+        self.addAlgorithm(FetchCrashData())
+        self.addAlgorithm(AssignPointsToSegments())
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())
 
@@ -93,8 +95,9 @@ class FdotCrashProvider(QgsProcessingProvider):
         implementation returns the same string as name().
         """
         return self.name()
+
     def icon(self):
         cmd_folder = os.path.split(inspect.getfile(inspect.currentframe()))[0]
-        icon = QIcon(os.path.join(os.path.join(cmd_folder, 'fdot_meatball_300x300.jpg')))
+        icon = QIcon(os.path.join(os.path.join(cmd_folder, 'florida_icon.jpg')))
         return icon
 
