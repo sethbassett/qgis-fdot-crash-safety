@@ -30,6 +30,10 @@ __copyright__ = '(C) 2023 by Seth Willis Bassett'
 
 __revision__ = '$Format:%H$'
 
+import os
+import inspect
+from qgis.PyQt.QtGui import QIcon
+
 from qgis.core import QgsProcessingProvider
 from .fdot_crash_safety_algorithm import FdotCrashAlgorithm
 
@@ -89,3 +93,8 @@ class FdotCrashProvider(QgsProcessingProvider):
         implementation returns the same string as name().
         """
         return self.name()
+    def icon(self):
+        cmd_folder = os.path.split(inspect.getfile(inspect.currentframe()))[0]
+        icon = QIcon(os.path.join(os.path.join(cmd_folder, 'fdot_logo_color300x150.png')))
+        return icon
+
