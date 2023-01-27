@@ -95,6 +95,6 @@ class FdotCrashProvider(QgsProcessingProvider):
         return self.name()
     def icon(self):
         cmd_folder = os.path.split(inspect.getfile(inspect.currentframe()))[0]
-        icon = QIcon(os.path.join(os.path.join(cmd_folder, 'fdot_logo_color300x150.png')))
+        icon = QIcon(os.path.join(os.path.join(cmd_folder, 'fdot_meatball_300x300.jpg')))
         return icon
 
