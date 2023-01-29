@@ -1,0 +1,85 @@
+import os
+import inspect
+from osgeo import gdal
+from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtCore import (QCoreApplication, QVariant)
+from qgis.core import (QgsMessageLog, 
+                       QgsProcessing,
+                       QgsFeatureSource,
+                       QgsFeatureSink,
+                       QgsProcessingAlgorithm,
+                       QgsProcessingParameterFeatureSource,
+                       QgsProcessingParameterEnum,
+                       QgsProcessingParameterField,
+                       QgsProcessingParameterFeatureSink,
+                       QgsProcessingParameterFileDestination)
+
+from qgis.core import (QgsFeature,
+                       QgsFeatureRequest,
+                       QgsFields,
+                       QgsField,
+                       QgsVectorLayer,
+                       QgsGeometry,
+                       QgsPointXY,
+                       QgsWkbTypes,                                              
+                       QgsFeatureRequest)
+
+
+def copy_to_memory(source):
+	source.selectAll()
+	memoryLayer = source.materialize(QgsFeatureRequest().setFilterFids(source.selectedFeatureIds()))
+	source.removeSelection()
+	return memoryLayer
+	
+
+lrsPath = r'https://services1.arcgis.com/O1JpcwDW8sjYuddV/arcgis/rest/services/LRS_Routes_with_Measures_TDA/FeatureServer/0'
+lrsUri = f"crs='EPSG:26917' url='{lrsPath}'"  
+lrs = copy_to_memory(QgsVectorLayer(lrsUri, 'lrs', 'arcgisfeatureserver'))
+lineId = 'ROADWAY'
+bmp = 'BEGIN_POST'
+emp = 'END_POST'
+
+carsPath = r'https://gis.fdot.gov/arcgis/rest/services/Crashes_All/FeatureServer/3'
+carsUri = f"crs='EPSG:26917' url='{carsPath}'"  
+cars = copy_to_memory(QgsVectorLayer(carsUri, 'lrs', 'arcgisfeatureserver'))
+carsId = 'ROADWAYID'
+carsMilepost = 'LOCMP'
+print(cars.featureCount())
+
+lookup = {feature.attributeMap().get(lineId):{} for feature in lrs.getFeatures()}
+for feature in lrs.getFeatures():
+	m = feature.attributeMap()
+	lid = m.get(lineId)
+	pair = (m.get(bmp), m.get(emp))
+	print(f'{lid}\t{pair}')
+	lookup[lid][pair] = 0
+
+noRoadway = 0
+unknownRoadway = 0
+unknownCrashPoints = []
+for feature in cars.getFeatures():
+	m = feature.attributeMap()
+	roadway = m.get(carsId)
+	if not roadway:
+		noRoadway += 1
+		continue	
+	elif not lookup.get(roadway):		
+		unknownRoadway += 1
+		unknownCrashPoints.append(feature)
+		continue
+	else:
+		pairLookup = lookup.get(roadway)
+		segments = [pair for pair in pairLookup.keys()]
+		for pair in segments:
+			bmp, emp = pair		
+			mp = m.get(carsMilepost)
+			if mp: 
+				if mp >= bmp and mp < emp:
+					lookup[roadway][pair] += 1
+
+for roadway, segmentLookup in lookup.items():
+	for pair, value in segmentLookup.items():
+		if value > 0:
+			print(f'{roadway}\t{pair}\t{value}')
+print(f'Points with no Roadway ID: {noRoadway}')			
+print(f'Points with an Unknown Roadway ID: {unknownRoadway}')			
