@@ -31,6 +31,7 @@ __copyright__ = '(C) 2023 by Seth Willis Bassett'
 __revision__ = '$Format:%H$'
 import os
 import inspect
+import copy
 from osgeo import gdal
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import (QCoreApplication, QVariant)
@@ -42,10 +43,12 @@ from qgis.core import (QgsMessageLog,
                        QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterEnum,
                        QgsProcessingParameterField,
+                       QgsProcessingParameterString,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingParameterFileDestination)
 
 from qgis.core import (QgsFeature,
+                       QgsExpression,
                        QgsFeatureSink,
                        QgsFields,
                        QgsField,
@@ -80,7 +83,11 @@ class AssignPointsToSegments(QgsProcessingAlgorithm):
     LINEWORK_BMP = 'LINEWORK_BMP'
     LINEWORK_EMP = 'LINEWORK_EMP'
     CRASHSOURCE = 'CRASHSOURCE'
-
+    YEARS = 'YEARS'
+    AGGFIELD = 'AGGFIELD'
+    NEWFIELD = 'NEWFIELD'
+    
+    allowedYears = [str(item) for item in [2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022]]
     basePath = r'https://gis.fdot.gov/arcgis/rest/services/Crashes_All/FeatureServer/'
     listIds = ['All Crashes','Commercial Vehicle','Drivers 65+','Fatalities',
                'Injuries and Fatalities','Motorcycle / Moped','Bicyclist','Pedestrian',
@@ -88,27 +95,19 @@ class AssignPointsToSegments(QgsProcessingAlgorithm):
                'Wet Weather','Aggressive Driving','Lane Change','Median Crossover',
                'Red Light Running','Speeding','Alcohol / Drug Use','Alcohol / Drugs Under Influence',
                'Seat Belt Not Used']
-    urls = {'All Crashes': '0',
-            'Commercial Vehicle': '1',
-            'Drivers 65+': '2',
-            'Fatalities': '3',
-            'Injuries and Fatalities': '4',
-            'Motorcycle / Moped': '5',
-            'Bicyclist': '6',
-            'Pedestrian': '7',
-            'Bridge': '8',
-            'Two-way Left-Turn Lane': '9',
-            'Work Zone': '10',
-            'Dark Conditions': '11',
-            'Wet Weather': '12',
-            'Aggressive Driving': '13',
-            'Lane Change': '14',
-            'Median Crossover': '15',
-            'Red Light Running': '16',
-            'Speeding': '17',
-            'Alcohol / Drug Use': '18',
-            'Alcohol / Drugs Under Influence': '19',
-            'Seat Belt Not Used': '20'}
+
+    # Builds a lookup for line layer
+    aggregationFields = [
+        'CALENDAR_YEAR', 'INJSEVER', 'INVSTGT_AGCY_CD', 'WEEKDAY_TXT', 'TRAVDIR', 'JCT_CD', 'FRST_HARM_LOC_CD', 'INTCT_TYP_CD', 'TYPESHLD', 
+        'RCI_SHOULDER_TYPE_1', 'RCI_SHOULDER_TYPE_2', 'RCI_SHOULDER_TYPE_3', 'CARSTACD', 'ALCINVCD', 'LGHT_COND_CD', 
+        'EVNT_WTHR_COND_CD', 'RD_SRFC_COND_CD', 'RDWY_GRDE_CD', 'RDWY_ALIGN_CD', 'TRAF_WAY_CD', 'V1_TRAF_WAY_CD', 'V2_TRAF_WAY_CD', 
+        'V1TRAFCTL', 'V2TRAFCTL', 'ROADCOND1', 'ROADCOND2', 'ROADCOND3', 'ENVIRNMT1', 'ENVIRNMT2', 'ENVIRNMT3', 'IMPCT_TYP_CD', 
+        'VHCL_MOVE_CD', 'D1_FRST_DR_ACTN_CD', 'D2_FRST_DR_ACTN_CD', 'LOC_WTHN_ZONE_CD', 'WRK_ZONE_TYP_CD', 'WRK_PRSNT_CD', 'LAW_ENFRC_PRSNT_CD', 
+        'SCHL_BUS_REL_CD', 'WRONGWAY_IND', 'WORKZONE_IND', 'COMMERCIAL_VEHICLE_IND', 'INTERSECTION_IND', 'LANE_DEPARTURE_IND', 'SPEEDING_IND', 
+        'AGGRESSIVE_DRIVING_IND', 'IMPAIRED_DRIVER_IND', 'IMPAIRED_PEDESTRIAN_IND', 'IMPAIRED_BICYCLIST_IND', 'DISTRACTED_DRIVER_IND', 
+        'SPEEDING_AGGRESSIVE_IND', 'PEDESTRIAN_RELATED_IND', 'BICYCLIST_RELATED_IND', 'PEDESTRIAN_BICYCLIST_IND', 'MOTORCYCLE_INVOLVED_IND', 
+        'NO_BELT_IND', 'NO_BELT_AGE_1_4_IND', 'NO_BELT_AGE_5_12_IND', 'NO_BELT_AGE_13_17_IND', 
+        'AGE_TEEN_IND', 'AGE_65_PLUS_IND', 'AGE_65_69_IND', 'AGE_70_74_IND', 'AGE_75_79_IND', 'AGE_80_PLUS_IND']
 
     def initAlgorithm(self, config):
         """
@@ -161,71 +160,125 @@ class AssignPointsToSegments(QgsProcessingAlgorithm):
                 defaultValue=0,
                 optional=False)
                 )
-
-        # self.addParameter(
-        #     QgsProcessingParameterFeatureSink(
-        #         name = self.OUTPUT,
-        #         description=self.tr('Output Lines'))
-        #         )
         self.addParameter(
-            QgsProcessingParameterFileDestination(
-                self.OUTPUT,
-                self.tr('Output File'),
-                'CSV files (*.csv)',
-            )
-        )
+            QgsProcessingParameterEnum(
+                name = self.YEARS,
+                description=self.tr('Crash Years'),
+                options=self.allowedYears,
+                allowMultiple = True,
+                optional=False)
+                )
+                
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                name = self.AGGFIELD,
+                description=self.tr('Crash Aggregation Field'),
+                options=self.aggregationFields,
+                defaultValue=0,
+                optional=False)
+                )
+
+        self.addParameter(
+            QgsProcessingParameterString(
+                name = self.NEWFIELD,
+                description=self.tr('New Crash Field Prefix'),                
+                defaultValue='crashes',
+                optional=False)
+                )
+
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                name = self.OUTPUT,
+                description=self.tr('Output Lines'))
+                )
+        # self.addParameter(
+        #     QgsProcessingParameterFileDestination(
+        #         self.OUTPUT,
+        #         self.tr('Output File'),
+        #         'CSV files (*.csv)',
+        #     )
+        # )
 
     def processAlgorithm(self, parameters, context, feedback):
         """
         Here is where the processing itself takes place.
         """
-        lines = self.parameterAsSource(parameters, self.INPUT, context)    
-        idField = self.parameterAsString(parameters, self.LINEWORK_ID, context)
-        bmpField = self.parameterAsString(parameters, self.LINEWORK_BMP, context)
-        empField = self.parameterAsString(parameters, self.LINEWORK_EMP, context)
-        
-        crashLayerName = self.parameterAsString(parameters, self.CRASHSOURCE, context)        
-        crashLayerUrl = os.path.join(self.basePath, crashLayerName)
-        
-        uri = f"crs='EPSG:26917' url='{crashLayerUrl}'"        
-        source = QgsVectorLayer(uri, 'crashes', 'arcgisfeatureserver')
+        line_source = self.parameterAsSource(parameters, self.INPUT, context)    
+        line_id_field = self.parameterAsString(parameters, self.LINEWORK_ID, context)
+        line_begin_field = self.parameterAsString(parameters, self.LINEWORK_BMP, context)
+        line_end_field = self.parameterAsString(parameters, self.LINEWORK_EMP, context)
+        line_fields = [line_id_field, line_begin_field, line_end_field]
 
-                
-        fields = QgsFields()
-        fields.append(QgsField(idField, QVariant.String))
-        fields.append(QgsField(bmpField, QVariant.Double, 'double', 10, 0))
-        fields.append(QgsField(empField, QVariant.Double, 'double', 10, 0))
+        crash_layer_idx = self.parameterAsString(parameters, self.CRASHSOURCE, context)                
+        crash_years_idx = self.parameterAsEnums(parameters, self.YEARS, context)
+        crash_years = [self.allowedYears[idx] for idx in crash_years_idx]
+
+        #crash_years_str = self.parameterAsString(parameters, self.YEARS, context)
+        test_portion = f'({",".join(crash_years)})'
+        feedback.pushInfo(f'crash_years_int: {test_portion}')
+        #feedback.pushInfo(f'crash_years_str: {print(crash_years_str)}')
+
+        crash_agg_idx = self.parameterAsInt(parameters, self.AGGFIELD, context)        
+        crash_agg_field = self.aggregationFields[crash_agg_idx]
+        feedback.pushInfo(f'Using {crash_agg_field} as aggregation field')
+
+        crash_fields = ['ROADWAYID','LOCMP', 'CALENDAR_YEAR', crash_agg_field]
+        crash_source = self.crashVectorLayer(crash_layer_idx)
         
-        fieldnames = [field.name() for field in lines.fields()]
+        feedback.pushInfo(f'Getting {line_source.featureCount()} line features...')        
+        feedback.pushInfo(f'Getting {crash_source.featureCount()} crash features...')
+        
+        line_features = self.getUserFeatures(line_source, line_fields)                
+        crash_features = self.getUserFeatures(crash_source, crash_fields, crash_years)
+        
+        # build and populate lookups
+        crash_lookup = self.buildAggregationLookup(crash_features, crash_agg_field)
+
+        new_field_pattern = self.parameterAsString(parameters, self.NEWFIELD, context)
+        new_fields = line_source.fields()
+        new_field_names = []
+        for key in sorted(crash_lookup.keys()):
+            class_name = ''.join(char for char in str(key) if char.isalnum() or char == '_')
+            new_field_name = f'{new_field_pattern}_{class_name}'
+            new_field_names.append((key, new_field_name))
+            new_fields.append(QgsField(new_field_name, QVariant.Int))
+        
+        sum_field_name = f'{new_field_pattern}_sum'
+        new_field_names.append(('sum', sum_field_name))
+        new_fields.append(QgsField(sum_field_name, QVariant.Int))
+
+        crash_lookup['sum'] = 0
+        line_lookup = self.buildLineLookup(line_features, line_fields, crash_lookup)
+        line_lookup = self.populateLineLookup(line_lookup, crash_features, crash_fields)
+
+
+
+
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context,
-                                               fields, source.wkbType(), source.sourceCrs())
+                                               new_fields, line_source.wkbType(), 
+                                               line_source.sourceCrs())
+
+        for z, feature in enumerate(line_features):
+            attribute_map = feature.attributeMap()            
+            new_feature = QgsFeature(new_fields, id = z)            
+            new_feature.setGeometry(feature.geometry())    
+            for key, value in attribute_map.items():
+                new_feature[key] = value      
+
+            feature_roadway = attribute_map.get(line_id_field)
+            feature_pair = (attribute_map.get(line_begin_field), 
+                            attribute_map.get(line_end_field))
+            aggregation_values = line_lookup.get(feature_roadway).get(feature_pair)
+            
+            if aggregation_values:
+  
+                for lookup_name, field_name in new_field_names:
+                    new_feature[field_name] = aggregation_values.get(lookup_name)
+            sink.addFeature(new_feature, QgsFeatureSink.FastInsert)
 
 
-        
 
-        #Compute the number of steps to display within the progress bar and
-        #get features from source
-        csv = self.parameterAsFileOutput(parameters, self.OUTPUT, context)
-        fieldnames = [field.name() for field in source.fields()]
-        total = 100.0 / source.featureCount() if source.featureCount() else 0
-        features = source.getFeatures()
-
-        with open(csv, 'w') as output_file:
-            # write header
-            line = ','.join(name for name in fieldnames) + '\n'
-            output_file.write(line)
-            for current, f in enumerate(features):
-                # Stop the algorithm if cancel button has been clicked
-                if feedback.isCanceled():
-                    break
-
-                # Add a feature in the sink
-                line = ','.join(str(f[name]) for name in fieldnames) + '\n'
-                output_file.write(line)
-
-                # Update the progress bar
-                feedback.setProgress(int(current * total))
-        return {self.OUTPUT: csv}
+        return {self.OUTPUT: dest_id}
         
 
     def name(self):
@@ -272,3 +325,77 @@ class AssignPointsToSegments(QgsProcessingAlgorithm):
         cmd_folder = os.path.split(inspect.getfile(inspect.currentframe()))[0]
         icon = QIcon(os.path.join(os.path.join(cmd_folder, 'icons/BasePointToSegment.svg')))
         return icon
+
+    def crashVectorLayer(self, crashLayer):        
+        url = os.path.join(self.basePath, crashLayer)        
+        uri = f"crs='EPSG:26917' url='{url}'"
+        crashSource = QgsVectorLayer(uri, 'crashes', 'arcgisfeatureserver')
+        return crashSource
+
+    def getUserFeatures(self, source, fields, crash_years = None):
+        request = QgsFeatureRequest()
+        
+        # fetch all features, only agg attributes
+        request.setSubsetOfAttributes(fields, source.fields())
+        
+        # fetch all features, without geometries
+        request = request.setFlags(QgsFeatureRequest.NoGeometry)        
+
+        if crash_years:
+            filter_expression = []
+            for year in crash_years:
+                filter_part = f'"CALENDAR_YEAR" = {year}'
+                filter_expression.append(filter_part)
+            full_expression = ' OR '.join(filter_expression)
+            request = request.setFilterExpression(full_expression)
+
+        features = [feature for feature in source.getFeatures(request)]
+        return features
+
+    def buildAggregationLookup(self, features, aggregation_field):
+        unique_values = [feature.attributeMap().get(aggregation_field) for feature in features]                
+        lookup = {value:0 for value in unique_values}        
+        return lookup
+    
+    def buildLineLookup(self, line_features, line_fields, aggregation_lookup):
+        roadway, bmp, emp = line_fields
+        
+        # initialize lookup
+        lookup = {feature.attributeMap().get(roadway):{} for feature in line_features}
+        
+        # populate lookup with empty aggregation lookup
+        for feature in line_features:
+            attribute_map = feature.attributeMap()
+            id = attribute_map.get(roadway)
+            linear_coordinate_pair = (attribute_map.get(bmp), attribute_map.get(emp))	
+            lookup[id][linear_coordinate_pair] = copy.deepcopy(aggregation_lookup)
+        return lookup
+
+    def populateLineLookup(self, line_lookup, crash_features, crash_fields):
+        roadway_field, milepost_field, calendar_year, aggregation_field = crash_fields        
+        missing = {'missing':0, 'unknown':0}        
+        for feature in crash_features:
+            attribute_map = feature.attributeMap()
+            roadway = attribute_map.get(roadway_field)            
+            # When point's roadway id is not present
+            if not roadway:
+                # class as 'missing' + next iteration
+                missing['missing'] += 1
+                continue	           
+            # When point's roadway id not in the line lookup
+            elif not line_lookup.get(roadway):		
+                # Class as 'unknown' + next iteration
+                missing['unknown'] += 1        
+                continue
+            else:
+                lrs_pairs = line_lookup.get(roadway)
+                segments = [pair for pair in lrs_pairs.keys()]
+                for pair in segments:
+                    bmp, emp = pair		
+                    milepost = attribute_map.get(milepost_field)
+                    aggregation_value = attribute_map.get(aggregation_field)
+                    if milepost: 
+                        if milepost >= bmp and milepost < emp:
+                            line_lookup[roadway][pair][aggregation_value] += 1
+                            line_lookup[roadway][pair]['sum'] += 1
+        return(line_lookup)

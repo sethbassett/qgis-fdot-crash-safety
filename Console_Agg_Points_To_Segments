@@ -39,12 +39,29 @@ lineId = 'ROADWAY'
 bmp = 'BEGIN_POST'
 emp = 'END_POST'
 
-carsPath = r'https://gis.fdot.gov/arcgis/rest/services/Crashes_All/FeatureServer/3'
+
+# Build URI
+carsPath = r'https://gis.fdot.gov/arcgis/rest/services/Crashes_All/FeatureServer/15'
 carsUri = f"crs='EPSG:26917' url='{carsPath}'"  
-cars = copy_to_memory(QgsVectorLayer(carsUri, 'lrs', 'arcgisfeatureserver'))
+carsRemote = QgsVectorLayer(carsUri, 'cars', 'arcgisfeatureserver')
+
+cars = copy_to_memory(carsRemote)
 carsId = 'ROADWAYID'
 carsMilepost = 'LOCMP'
+
+# Feature Count
 print(cars.featureCount())
+
+# List of Field Names
+carsFields = cars.dataProvider().fields().names()
+
+# List Field Names of Particular type
+# 2	esriFieldTypeSmallInteger
+# 4	esriFieldTypeInteger / esriFieldTypeOID
+# 6	esriFieldTypeDouble
+# 10 esriFieldTypeString
+# 16 esriFieldTypeDate
+classFields = [field.name() for field in carsRemote.fields() if field.type() in (2, 4, 10)]
 
 lookup = {feature.attributeMap().get(lineId):{} for feature in lrs.getFeatures()}
 for feature in lrs.getFeatures():
