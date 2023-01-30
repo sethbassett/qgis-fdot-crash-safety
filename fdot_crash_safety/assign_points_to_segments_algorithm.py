@@ -203,36 +203,48 @@ class AssignPointsToSegments(QgsProcessingAlgorithm):
         """
         Here is where the processing itself takes place.
         """
+        feedback.pushInfo(f'Connecting to Vector Data Source Provider: Linework')
         line_source = self.parameterAsSource(parameters, self.INPUT, context)    
         line_id_field = self.parameterAsString(parameters, self.LINEWORK_ID, context)
         line_begin_field = self.parameterAsString(parameters, self.LINEWORK_BMP, context)
         line_end_field = self.parameterAsString(parameters, self.LINEWORK_EMP, context)
         line_fields = [line_id_field, line_begin_field, line_end_field]
+        feedback.setProgress(10)
 
+
+        feedback.pushInfo(f'Connecting to Vector Data Source Provider: Crashes')        
         crash_layer_idx = self.parameterAsString(parameters, self.CRASHSOURCE, context)                
+        crash_source = self.crashVectorLayer(crash_layer_idx)
+
         crash_years_idx = self.parameterAsEnums(parameters, self.YEARS, context)
         crash_years = [self.allowedYears[idx] for idx in crash_years_idx]
-
-        #crash_years_str = self.parameterAsString(parameters, self.YEARS, context)
-        test_portion = f'({",".join(crash_years)})'
-        feedback.pushInfo(f'crash_years_int: {test_portion}')
+       
+        filter_expression = []
+        for year in crash_years:
+            filter_part = f'"CALENDAR_YEAR" = {year}'
+            filter_expression.append(filter_part)
+        full_expression = ' OR '.join(filter_expression)        
+        feedback.pushInfo(f'Crash Filter Expression:\n{full_expression}')
+        crash_source.selectByExpression(full_expression)
+        crash_ids = crash_source.selectedFeatureIds()
+        feedback.pushInfo(f'{crash_source.selectedFeatureCount()} crashes selected')
         #feedback.pushInfo(f'crash_years_str: {print(crash_years_str)}')
 
         crash_agg_idx = self.parameterAsInt(parameters, self.AGGFIELD, context)        
         crash_agg_field = self.aggregationFields[crash_agg_idx]
         feedback.pushInfo(f'Using {crash_agg_field} as aggregation field')
-
-        crash_fields = ['ROADWAYID','LOCMP', 'CALENDAR_YEAR', crash_agg_field]
-        crash_source = self.crashVectorLayer(crash_layer_idx)
         
+        crash_fields = ['ROADWAYID','LOCMP', 'CALENDAR_YEAR', crash_agg_field]        
         feedback.pushInfo(f'Getting {line_source.featureCount()} line features...')        
-        feedback.pushInfo(f'Getting {crash_source.featureCount()} crash features...')
+        feedback.pushInfo(f'Getting {crash_source.selectedFeatureCount()} crash features...')
         
+        
+        # get a local copy of the features
         line_features = self.getUserFeatures(line_source, line_fields)                
-        crash_features = self.getUserFeatures(crash_source, crash_fields, crash_years)
+        crash_features = self.getUserFeatures(crash_source, crash_fields, crash_ids)
         
         # build and populate lookups
-        crash_lookup = self.buildAggregationLookup(crash_features, crash_agg_field)
+        crash_lookup = self.buildAggregationLookup(crash_features, crash_agg_field)        
 
         new_field_pattern = self.parameterAsString(parameters, self.NEWFIELD, context)
         new_fields = line_source.fields()
@@ -248,11 +260,9 @@ class AssignPointsToSegments(QgsProcessingAlgorithm):
         new_fields.append(QgsField(sum_field_name, QVariant.Int))
 
         crash_lookup['sum'] = 0
+
         line_lookup = self.buildLineLookup(line_features, line_fields, crash_lookup)
         line_lookup = self.populateLineLookup(line_lookup, crash_features, crash_fields)
-
-
-
 
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context,
                                                new_fields, line_source.wkbType(), 
@@ -332,23 +342,17 @@ class AssignPointsToSegments(QgsProcessingAlgorithm):
         crashSource = QgsVectorLayer(uri, 'crashes', 'arcgisfeatureserver')
         return crashSource
 
-    def getUserFeatures(self, source, fields, crash_years = None):
+    def getUserFeatures(self, source, fields, ids = None):
         request = QgsFeatureRequest()
         
         # fetch all features, only agg attributes
-        request.setSubsetOfAttributes(fields, source.fields())
+        request = request.setSubsetOfAttributes(fields, source.fields())
         
         # fetch all features, without geometries
         request = request.setFlags(QgsFeatureRequest.NoGeometry)        
-
-        if crash_years:
-            filter_expression = []
-            for year in crash_years:
-                filter_part = f'"CALENDAR_YEAR" = {year}'
-                filter_expression.append(filter_part)
-            full_expression = ' OR '.join(filter_expression)
-            request = request.setFilterExpression(full_expression)
-
+        request = request.setConnectionTimeout(-1)
+        if ids:
+            request = request.setFilterFids(ids)
         features = [feature for feature in source.getFeatures(request)]
         return features
 
